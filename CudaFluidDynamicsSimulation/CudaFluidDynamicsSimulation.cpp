@@ -1,8 +1,25 @@
 #include "SFML\Graphics.hpp"
 #include <iostream>
-using std::cout;
 
-void addWithCuda(int* c, int* a, int* b, int size);
+
+
+struct Parameters
+{
+    float velocityDiffusion;
+    float pressure;
+    float vorticity;
+    float colorDiffusion;
+    float desityDiffusion;
+    float bloomIntensity;
+    int radius;
+    bool bloomEnable;
+};
+
+
+void setParams();
+
+void cudaInit(size_t x, size_t y);
+void cudaExit();
 
 int main() {
     sf::RenderWindow window(sf::VideoMode(500, 500), "Hello SFML and CUDA!", sf::Style::Close);
@@ -24,12 +41,6 @@ int main() {
                 window.close();
             }
         }
-
-        addWithCuda(c, a, b, size);
-        for (int i = 0; i < 20; i++) {
-            cout << c[i] << " ";
-        }
-        cout << "\n";
 
         window.clear(sf::Color(0, 0, 0));
         window.display();
