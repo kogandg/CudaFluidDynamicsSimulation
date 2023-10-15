@@ -119,11 +119,11 @@ __global__ void computeVorticity(float* vField, Particle* field, size_t xSize, s
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-	vorticityField[y * xSize + x] = curl(field, xSize, ySize, x, y);
+	//vorticityField[y * xSize + x] = curl(field, xSize, ySize, x, y);
 }
 
 // main, calls vorticity -> diffusion -> force -> pressure -> project -> advect -> paint -> bloom
-void computeField(Color* result)
+void computeField(unsigned char* result, float dt, int x1pos, int y1pos, int x2pos, int y2pos, bool isPressed)
 {
 	dim3 threadsPerBlock(systemConfig.xThreads, systemConfig.yThreads);
 	dim3 numBlocks(xSize / threadsPerBlock.x, ySize / threadsPerBlock.y);
