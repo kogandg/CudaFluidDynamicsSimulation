@@ -10,21 +10,8 @@ const int WINDOW_HEIGHT = 720;
 const int FIELD_WIDTH = WINDOW_WIDTH / SCALE;
 const int FIELD_HEIGHT = WINDOW_HEIGHT / SCALE;
 
-struct Parameters
-{
-	float velocityDiffusion;
-	float pressure;
-	float vorticity;
-	float colorDiffusion;
-	float desityDiffusion;
-	float bloomIntensity;
-	int radius;
-	bool bloomEnable;
-} parameters;
-
-
-void setParams(float vDiffusion = 0.8f, float pressure = 1.5f, float vorticity = 50.0f, float cDiffuion = 0.8f,
-	float dDiffuion = 1.2f, float force = 1000.0f, float bloomIntensity = 25000.0f, int radius = 100, bool bloomEnable = true);
+//void setParams(float vDiffusion = 0.8f, float pressure = 1.5f, float vorticity = 50.0f, float cDiffusion = 0.8f,
+//	float dDiffusion = 1.2f, float force = 1000.0f, float bloomIntensity = 25000.0f, int radius = 100, bool bloomEnable = true);
 
 void cudaInit(size_t x, size_t y);
 void cudaExit();
