@@ -94,7 +94,7 @@ struct Parameters
 void setParams(
 	float vDiffusion = 0.8f,
 	float pressure = 1.5f,
-	float vorticity = 50.0f,
+	float vorticity = 1000.0f,
 	float cDiffusion = 0.8f,
 	float dDiffusion = 1.2f,
 	float force = 1000.0f,
@@ -175,7 +175,6 @@ void cudaInit(size_t x, size_t y)
 	CUDACall(cudaMalloc(&oldPressure, xSize * ySize * sizeof(float)));
 	CUDACall(cudaMalloc(&newPressure, xSize * ySize * sizeof(float)));
 	CUDACall(cudaMalloc(&vorticityField, xSize * ySize * sizeof(float)));
-
 }
 
 
@@ -215,7 +214,6 @@ __device__ Particle interpolate(Vector2 vector, Particle* field, size_t xSize, s
 	Vector2 f2 = q2.velocity * t1 + q4.velocity * t2;
 	Color C1 = q2.color * t1 + q4.color * t2;
 	Color C2 = q2.color * t1 + q4.color * t2;
-
 	float t3 = (y2 - vector.y) / (y2 - y1);
 	float t4 = (vector.y - y1) / (y2 - y1);
 	Particle result;
@@ -234,6 +232,8 @@ __global__ void advect(Particle* newField, Particle* oldField, size_t xSize, siz
 	Vector2 position = { x * 1.0f, y * 1.0f };
 
 	Particle& oldParticle = oldField[y * xSize + x];
+
+	// find new particle tracing where it came from
 	Particle newParticle = interpolate(position - oldParticle.velocity * dt, oldField, xSize, ySize);
 	newParticle.velocity = newParticle.velocity * decay;
 	newParticle.color = newParticle.color * decay;
@@ -350,7 +350,7 @@ __device__ float curl(Particle* field, size_t xSize, size_t ySize, int x, int y)
 	if (insideBounds(x - 1, y, xSize, ySize)) x1 = field[y * xSize + (x - 1)].velocity.x;
 	if (insideBounds(x + 1, y, xSize, ySize)) x1 = field[y * xSize + (x + 1)].velocity.x;
 
-	float result = ((y1 - y2) - (x1 - x2)) * 0.05f;
+	float result = ((y1 - y2) - (x1 - x2)) * 0.5f;
 	return result;
 
 }
