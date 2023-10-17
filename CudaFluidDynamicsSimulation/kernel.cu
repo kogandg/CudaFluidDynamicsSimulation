@@ -7,11 +7,14 @@
 #include <iostream>
 #include <cstdlib>
 
+#include "Parameters.h"
+
 using uint8_t = unsigned char;
 
 struct Vector2
 {
-	float x = 0.0, y = 0.0;
+	float x = 0.0;
+	float y = 0.0;
 
 	__device__ Vector2 operator-(Vector2 other)
 	{
@@ -69,19 +72,6 @@ struct Particle
 	Color color;
 };
 
-static struct Parameters
-{
-	float velocityDiffusion;
-	float pressure;
-	float vorticity;
-	float colorDiffusion;
-	float densityDiffusion;
-	float forceScale;
-	float bloomIntesity;
-	int radius;
-	bool bloomEnabled;
-} parameters;
-
 static struct SystemConfig
 {
 	int velocityIterations = 20;
@@ -89,29 +79,6 @@ static struct SystemConfig
 	int xThreads = 80;
 	int yThreads = 1;
 } sysConfig;
-
-void setParams(
-	float vDiffusion = 0.8f,
-	float pressure = 1.5f,
-	float vorticity = 50.0f,
-	float cDiffuion = 0.8f,
-	float dDiffuion = 1.2f,
-	float force = 5000.0f,
-	float bloomIntesity = 0.1f,
-	int radius = 400,
-	bool bloomEnabled = true
-)
-{
-	parameters.velocityDiffusion = vDiffusion;
-	parameters.pressure = pressure;
-	parameters.vorticity = vorticity;
-	parameters.colorDiffusion = cDiffuion;
-	parameters.densityDiffusion = dDiffuion;
-	parameters.forceScale = force;
-	parameters.bloomIntesity = bloomIntesity;
-	parameters.radius = radius;
-	parameters.bloomEnabled = bloomEnabled;
-}
 
 static const int colorArraySize = 7;
 Color colorArray[colorArraySize];
@@ -127,6 +94,8 @@ static float* vorticityField;
 static Color currentColor;
 static float elapsedTime = 0.0f;
 static float timeSincePress = 0.0f;
+
+Parameters* parameters;
 
 void cudaExit()
 {
@@ -153,12 +122,13 @@ void CUDACall(cudaError_t result)
 	}
 }
 
-void cudaInit(size_t x, size_t y)
+void cudaInit(size_t x, size_t y, Parameters* params)
 {
 	int cudaDevices = 0;
 	CUDACall(cudaGetDeviceCount(&cudaDevices));
 
-	setParams();
+	parameters = params;
+	parameters->bloomEnabled = false;
 
 	colorArray[0] = { 1.0f, 0.0f, 0.0f };
 	colorArray[1] = { 0.0f, 1.0f, 0.0f };
@@ -320,8 +290,8 @@ void computeDiffusion(dim3 numBlocks, dim3 threadsPerBlock, float dt)
 	//diffuse velocity and color
 	for (int i = 0; i < sysConfig.velocityIterations; i++)
 	{
-		diffuse << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters.velocityDiffusion, dt);
-		computeColor << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters.colorDiffusion, dt);
+		diffuse << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters->velocityDiffusion, dt);
+		computeColor << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters->colorDiffusion, dt);
 		std::swap(newField, oldField);
 	}
 }
@@ -466,7 +436,7 @@ void computePressure(dim3 numBlocks, dim3 threadsPerBlock, float dt)
 {
 	for (int i = 0; i < sysConfig.pressureIterations; i++)
 	{
-		computePressureImpl << <numBlocks, threadsPerBlock >> > (oldField, xSize, ySize, newPressure, oldPressure, parameters.pressure, dt);
+		computePressureImpl << <numBlocks, threadsPerBlock >> > (oldField, xSize, ySize, newPressure, oldPressure, parameters->pressure, dt);
 		std::swap(oldPressure, newPressure);
 	}
 }
@@ -545,7 +515,7 @@ void computeField(uint8_t* result, float dt, int x1Pos, int y1Pos, int x2Pos, in
 
 	//curls and vortisity
 	computeVorticity << <numBlocks, threadsPerBlock >> > (vorticityField, oldField, xSize, ySize);
-	applyVorticity << <numBlocks, threadsPerBlock >> > (newField, oldField, vorticityField, xSize, ySize, parameters.vorticity, dt);
+	applyVorticity << <numBlocks, threadsPerBlock >> > (newField, oldField, vorticityField, xSize, ySize, parameters->vorticity, dt);
 	std::swap(oldField, newField);
 
 	//diffuse velocity and color
@@ -558,18 +528,18 @@ void computeField(uint8_t* result, float dt, int x1Pos, int y1Pos, int x2Pos, in
 		elapsedTime += dt;
 
 		int roundTime = (int)(elapsedTime) % colorArraySize;
-		int ceilTime = (int)((elapsedTime) + 1) % colorArraySize;
+		int ceilTime = (int)((elapsedTime)+1) % colorArraySize;
 
 		float w = elapsedTime - (int)(elapsedTime);
 		currentColor = colorArray[roundTime] * (1 - w) + colorArray[ceilTime] * w;
 
 		Vector2 force;
-		force.x = (x2Pos - x1Pos) * parameters.forceScale;
-		force.y = (y2Pos - y1Pos) * parameters.forceScale;
+		force.x = (x2Pos - x1Pos) * parameters->forceScale;
+		force.y = (y2Pos - y1Pos) * parameters->forceScale;
 
 		Vector2 position = { x2Pos * 1.0f, y2Pos * 1.0f };
 
-		applyForce << <numBlocks, threadsPerBlock >> > (oldField, xSize, ySize, currentColor, force, position, parameters.radius, dt);
+		applyForce << <numBlocks, threadsPerBlock >> > (oldField, xSize, ySize, currentColor, force, position, parameters->radius, dt);
 	}
 	else
 	{
@@ -584,16 +554,16 @@ void computeField(uint8_t* result, float dt, int x1Pos, int y1Pos, int x2Pos, in
 	CUDACall(cudaMemset(oldPressure, 0, xSize * ySize * sizeof(float)));
 
 	//advect
-	advect << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters.densityDiffusion, dt);
+	advect << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters->densityDiffusion, dt);
 	std::swap(newField, oldField);
 
 	//paint image
 	paint << <numBlocks, threadsPerBlock >> > (colorField, oldField, xSize, ySize);
 
 	//apply bloom in mouse pos
-	if (parameters.bloomEnabled && timeSincePress < 5.0f)
+	if (parameters->bloomEnabled && timeSincePress < 5.0f)
 	{
-		applyBloom << <numBlocks, threadsPerBlock >> > (colorField, xSize, ySize, x2Pos, y2Pos, parameters.radius, parameters.bloomIntesity);
+		applyBloom << <numBlocks, threadsPerBlock >> > (colorField, xSize, ySize, x2Pos, y2Pos, parameters->radius, parameters->bloomIntensity);
 	}
 
 	//copy image to cpu
