@@ -4,15 +4,14 @@
 #include "cudart_platform.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <iostream>
+#include <cstdlib>
 
 using uint8_t = unsigned char;
 
 struct Vector2
 {
-	float x = 0.0f;
-	float y = 0.0f;
+	float x = 0.0, y = 0.0;
 
 	__device__ Vector2 operator-(Vector2 other)
 	{
@@ -70,15 +69,7 @@ struct Particle
 	Color color;
 };
 
-static struct SystemConfig
-{
-	int velocityIterations = 20;
-	int pressureIterations = 40;
-	int xThreads = 80;
-	int yThreads = 1;
-} systemConfig;
-
-struct Parameters
+static struct Parameters
 {
 	float velocityDiffusion;
 	float pressure;
@@ -86,42 +77,50 @@ struct Parameters
 	float colorDiffusion;
 	float densityDiffusion;
 	float forceScale;
-	float bloomIntensity;
+	float bloomIntesity;
 	int radius;
-	bool bloomEnable;
+	bool bloomEnabled;
 } parameters;
+
+static struct SystemConfig
+{
+	int velocityIterations = 20;
+	int pressureIterations = 40;
+	int xThreads = 80;
+	int yThreads = 1;
+} sysConfig;
 
 void setParams(
 	float vDiffusion = 0.8f,
 	float pressure = 1.5f,
-	float vorticity = 1000.0f,
-	float cDiffusion = 0.8f,
-	float dDiffusion = 1.2f,
-	float force = 1000.0f,
-	float bloomIntensity = 25000.0f,
-	int radius = 100,
-	bool bloomEnable = false)
+	float vorticity = 50.0f,
+	float cDiffuion = 0.8f,
+	float dDiffuion = 1.2f,
+	float force = 5000.0f,
+	float bloomIntesity = 0.1f,
+	int radius = 400,
+	bool bloomEnabled = true
+)
 {
 	parameters.velocityDiffusion = vDiffusion;
 	parameters.pressure = pressure;
 	parameters.vorticity = vorticity;
-	parameters.colorDiffusion = cDiffusion;
-	parameters.densityDiffusion = dDiffusion;
+	parameters.colorDiffusion = cDiffuion;
+	parameters.densityDiffusion = dDiffuion;
 	parameters.forceScale = force;
-	parameters.bloomIntensity = bloomIntensity;
+	parameters.bloomIntesity = bloomIntesity;
 	parameters.radius = radius;
-	parameters.bloomEnable = bloomEnable;
+	parameters.bloomEnabled = bloomEnabled;
 }
 
 static const int colorArraySize = 7;
 Color colorArray[colorArraySize];
 
-//put these in a function to live there
 static Particle* newField;
 static Particle* oldField;
+static uint8_t* colorField;
 static size_t xSize;
 static size_t ySize;
-static uint8_t* colorField;
 static float* oldPressure;
 static float* newPressure;
 static float* vorticityField;
@@ -138,7 +137,6 @@ void cudaExit()
 	cudaFree(newPressure);
 	cudaFree(vorticityField);
 }
-
 
 void CUDACall(cudaError_t result)
 {
@@ -184,8 +182,6 @@ void cudaInit(size_t x, size_t y)
 	CUDACall(cudaMalloc(&vorticityField, xSize * ySize * sizeof(float)));
 }
 
-
-
 __device__ float clampHelper(float value, float min, float max)
 {
 	float maxRes = fmax(min, value);
@@ -223,6 +219,7 @@ __device__ Particle interpolate(Vector2 vector, Particle* field, size_t xSize, s
 	Color C2 = q2.color * t1 + q4.color * t2;
 	float t3 = (y2 - vector.y) / (y2 - y1);
 	float t4 = (vector.y - y1) / (y2 - y1);
+
 	Particle result;
 	result.velocity = f1 * t3 + f2 * t4;
 	result.color = C1 * t3 + C2 * t4;
@@ -230,6 +227,7 @@ __device__ Particle interpolate(Vector2 vector, Particle* field, size_t xSize, s
 	return result;
 }
 
+//adds quantity to particles using bilinear interpolation
 __global__ void advect(Particle* newField, Particle* oldField, size_t xSize, size_t ySize, float dDiffusion, float dt)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -240,10 +238,13 @@ __global__ void advect(Particle* newField, Particle* oldField, size_t xSize, siz
 
 	Particle& oldParticle = oldField[y * xSize + x];
 
-	// find new particle tracing where it came from
+	//find new particle tracing where it came from
 	Particle newParticle = interpolate(position - oldParticle.velocity * dt, oldField, xSize, ySize);
 	newParticle.velocity = newParticle.velocity * decay;
 	newParticle.color = newParticle.color * decay;
+	/*newParticle.color.R = fmin(1.0f, pow(newParticle.color.R, 1.005f) * decay);
+	newParticle.color.G = fmin(1.0f, pow(newParticle.color.G, 1.005f) * decay);
+	newParticle.color.B = fmin(1.0f, pow(newParticle.color.B, 1.005f) * decay);*/
 	newField[y * xSize + x] = newParticle;
 }
 
@@ -295,29 +296,29 @@ __device__ Vector2 jacobiVelocity(Particle* field, size_t xSize, size_t ySize, V
 	if (insideBounds(v.x - 1, v.y, xSize, ySize)) vL = field[(int)(v.y) * xSize + (int)(v.x - 1)].velocity;
 	if (insideBounds(v.x + 1, v.y, xSize, ySize)) vR = field[(int)(v.y) * xSize + (int)(v.x + 1)].velocity;
 
-	v = (vU + vD + vL + vR + B * alpha) * (1.0f / beta);
-	return v;
+	Vector2 result = (vU + vD + vL + vR + B * alpha) * (1.0f / beta);
+	return result;
 }
 
-// calculates nonzero divergency velocity field u
+//calculates nonzero divergency velocity field u
 __global__ void diffuse(Particle* newField, Particle* oldField, size_t xSize, size_t ySize, float vDiffusion, float dt)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-	Vector2 pos = { x * 1.0f, y * 1.0f };
-	Vector2 u = oldField[y * xSize + x].velocity;
+	Vector2 position = { x * 1.0f, y * 1.0f };
+	Vector2 velocity = oldField[y * xSize + x].velocity;
 
 	float alpha = vDiffusion * vDiffusion / dt;
 	float beta = 4.0f + alpha;
-	newField[y * xSize + x].velocity = jacobiVelocity(oldField, xSize, ySize, pos, u, alpha, beta);
+	newField[y * xSize + x].velocity = jacobiVelocity(oldField, xSize, ySize, position, velocity, alpha, beta);
 }
 
-// performs several iterations over velocity and color fields
+//performs several iterations over velocity and color fields
 void computeDiffusion(dim3 numBlocks, dim3 threadsPerBlock, float dt)
 {
 	//diffuse velocity and color
-	for (int i = 0; i < systemConfig.velocityIterations; i++)
+	for (int i = 0; i < sysConfig.velocityIterations; i++)
 	{
 		diffuse << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters.velocityDiffusion, dt);
 		computeColor << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters.colorDiffusion, dt);
@@ -325,12 +326,13 @@ void computeDiffusion(dim3 numBlocks, dim3 threadsPerBlock, float dt)
 	}
 }
 
-__global__ void applyForce(Particle* field, size_t xSize, size_t ySize, Color color, Vector2 F, Vector2 position, int r, float dt)
+//applies force and add color dye to the particle field
+__global__ void applyForce(Particle* field, size_t xSize, size_t ySize, Color color, Vector2 F, Vector2 position, int radius, float dt)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-	float e = expf((-(powf(x - position.x, 2) + powf(y - position.y, 2))) / r);
+	float e = expf(-((x - position.x) * (x - position.x) + (y - position.y) * (y - position.y)) / radius);
 	Vector2 uF = F * dt * e;
 
 	Particle& particle = field[y * xSize + x];
@@ -345,21 +347,20 @@ __global__ void applyForce(Particle* field, size_t xSize, size_t ySize, Color co
 //computes curl of velocity field
 __device__ float curl(Particle* field, size_t xSize, size_t ySize, int x, int y)
 {
-	Vector2 curl = field[y * xSize + x].velocity;
+	Vector2 C = field[int(y) * xSize + int(x)].velocity;
 
-	float x1 = -curl.x;
-	float x2 = -curl.x;
-	float y1 = -curl.y;
-	float y2 = -curl.y;
+	float x1 = -C.x;
+	float x2 = -C.x;
+	float y1 = -C.y;
+	float y2 = -C.y;
 
-	if (insideBounds(x, y - 1, xSize, ySize)) y1 = field[(y - 1) * xSize + x].velocity.y;
-	if (insideBounds(x, y + 1, xSize, ySize)) y1 = field[(y + 1) * xSize + x].velocity.y;
-	if (insideBounds(x - 1, y, xSize, ySize)) x1 = field[y * xSize + (x - 1)].velocity.x;
 	if (insideBounds(x + 1, y, xSize, ySize)) x1 = field[y * xSize + (x + 1)].velocity.x;
+	if (insideBounds(x - 1, y, xSize, ySize)) x2 = field[y * xSize + (x - 1)].velocity.x;
+	if (insideBounds(x, y + 1, xSize, ySize)) y1 = field[(y + 1) * xSize + x].velocity.y;
+	if (insideBounds(x, y - 1, xSize, ySize)) y2 = field[(y - 1) * xSize + x].velocity.y;
 
 	float result = ((y1 - y2) - (x1 - x2)) * 0.5f;
 	return result;
-
 }
 
 //computes absolute value gradient of vorticity field
@@ -372,11 +373,10 @@ __device__ Vector2 absGradient(float* field, size_t xSize, size_t ySize, int x, 
 	float y1 = C;
 	float y2 = C;
 
-
-	if (insideBounds(x, y - 1, xSize, ySize)) y2 = field[(y - 1) * xSize + x];
-	if (insideBounds(x, y + 1, xSize, ySize)) y1 = field[(y + 1) * xSize + x];
-	if (insideBounds(x - 1, y, xSize, ySize)) x2 = field[y * xSize + (x - 1)];
 	if (insideBounds(x + 1, y, xSize, ySize)) x1 = field[y * xSize + (x + 1)];
+	if (insideBounds(x - 1, y, xSize, ySize)) x2 = field[y * xSize + (x - 1)];
+	if (insideBounds(x, y + 1, xSize, ySize)) y1 = field[(y + 1) * xSize + x];
+	if (insideBounds(x, y - 1, xSize, ySize)) y2 = field[(y - 1) * xSize + x];
 
 	Vector2 result = { (abs(x1) - abs(x2)) * 0.5f, (abs(y1) - abs(y2)) * 0.5f };
 	return result;
@@ -411,7 +411,7 @@ __global__ void applyVorticity(Particle* newField, Particle* oldField, float* vF
 	newParticle.velocity = newParticle.velocity + vF * dt;
 }
 
-//iteration of jacobi method on pressure grid field
+//performs iteration of jacobi method on pressure grid field
 __device__ float jacobiPressure(float* pressureField, size_t xSize, size_t ySize, int x, int y, float B, float alpha, float beta)
 {
 	float C = pressureField[int(y) * xSize + int(x)];
@@ -434,20 +434,21 @@ __device__ float jacobiPressure(float* pressureField, size_t xSize, size_t ySize
 __device__ float divergence(Particle* field, size_t xSize, size_t ySize, int x, int y)
 {
 	Particle& C = field[int(y) * xSize + int(x)];
+
 	float x1 = -1 * C.velocity.x;
 	float x2 = -1 * C.velocity.x;
 	float y1 = -1 * C.velocity.y;
 	float y2 = -1 * C.velocity.y;
 
-	if (insideBounds(x, y - 1, xSize, ySize)) y1 = field[(y - 1) * xSize + x].velocity.y;
-	if (insideBounds(x, y + 1, xSize, ySize)) y1 = field[(y + 1) * xSize + x].velocity.y;
-	if (insideBounds(x - 1, y, xSize, ySize)) x1 = field[y * xSize + (x - 1)].velocity.x;
-	if (insideBounds(x + 1, y, xSize, ySize)) x1 = field[y * xSize + (x + 1)].velocity.x;
+	if (insideBounds(x + 1, y, xSize, ySize)) x1 = field[(int)(y)*xSize + (int)(x + 1)].velocity.x;
+	if (insideBounds(x - 1, y, xSize, ySize)) x2 = field[(int)(y)*xSize + (int)(x - 1)].velocity.x;
+	if (insideBounds(x, y + 1, xSize, ySize)) y1 = field[(int)(y + 1) * xSize + (int)(x)].velocity.y;
+	if (insideBounds(x, y - 1, xSize, ySize)) y2 = field[(int)(y - 1) * xSize + (int)(x)].velocity.y;
 
 	return (x1 - x2 + y1 - y2) * 0.5f;
 }
 
-//iteration of jacobi method on pressure field
+// performs iteration of jacobi method on pressure field
 __global__ void computePressureImpl(Particle* field, size_t xSize, size_t ySize, float* newPressure, float* oldPressure, float pressure, float dt)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -460,11 +461,12 @@ __global__ void computePressureImpl(Particle* field, size_t xSize, size_t ySize,
 	newPressure[y * xSize + x] = jacobiPressure(oldPressure, xSize, ySize, x, y, div, alpha, beta);
 }
 
+//performs several iterations over pressure field
 void computePressure(dim3 numBlocks, dim3 threadsPerBlock, float dt)
 {
-	for (int i = 0; i < systemConfig.pressureIterations; i++)
+	for (int i = 0; i < sysConfig.pressureIterations; i++)
 	{
-		computePressureImpl << <numBlocks, threadsPerBlock >> > (oldField, xSize, ySize, oldPressure, newPressure, parameters.pressure, dt);
+		computePressureImpl << <numBlocks, threadsPerBlock >> > (oldField, xSize, ySize, newPressure, oldPressure, parameters.pressure, dt);
 		std::swap(oldPressure, newPressure);
 	}
 }
@@ -479,16 +481,16 @@ __device__ Vector2 gradient(float* field, size_t xSize, size_t ySize, int x, int
 	float y1 = C;
 	float y2 = C;
 
-	if (insideBounds(x, y - 1, xSize, ySize)) y2 = field[(y - 1) * xSize + x];
-	if (insideBounds(x, y + 1, xSize, ySize)) y1 = field[(y + 1) * xSize + x];
-	if (insideBounds(x - 1, y, xSize, ySize)) x2 = field[y * xSize + (x - 1)];
 	if (insideBounds(x + 1, y, xSize, ySize)) x1 = field[y * xSize + (x + 1)];
+	if (insideBounds(x - 1, y, xSize, ySize)) x2 = field[y * xSize + (x - 1)];
+	if (insideBounds(x, y + 1, xSize, ySize)) y1 = field[(y + 1) * xSize + x];
+	if (insideBounds(x, y - 1, xSize, ySize)) y2 = field[(y - 1) * xSize + x];
 
 	Vector2 result = { (x1 - x2) * 0.5f, (y1 - y2) * 0.5f };
 	return result;
 }
 
-//projects pressure field on velocity field
+// projects pressure field on velocity field
 __global__ void project(Particle* newField, size_t xSize, size_t ySize, float* pressureField)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -499,24 +501,25 @@ __global__ void project(Particle* newField, size_t xSize, size_t ySize, float* p
 }
 
 //adds flashlight effect near the mouse position
-__global__ void applyBloom(uint8_t* colorField, size_t xSize, size_t ySize, int xPos, int yPos, float bloomIntensity)
+__global__ void applyBloom(uint8_t* colorField, size_t xSize, size_t ySize, int xpos, int ypos, float radius, float bloomIntensity)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	int pos = 4 * (y * xSize + x);
+	int position = 4 * (y * xSize + x);
 
-	float e = expf(-(powf(x - xPos, 2) + powf(y - yPos, 2)) * (1.0f / (bloomIntensity + 1e-5f)));
+	float e = bloomIntensity * expf(-((x - xpos) * (x - xpos) + (y - ypos) * (y - ypos) + 1.0f) / (radius * radius));
 
-	uint8_t R = colorField[pos + 0]; 
-	uint8_t G = colorField[pos + 1];
-	uint8_t B = colorField[pos + 2];
+	uint8_t R = colorField[position + 0];
+	uint8_t G = colorField[position + 1];
+	uint8_t B = colorField[position + 2];
 
 	uint8_t maxVal = fmaxf(R, fmaxf(G, B));
 
-	colorField[pos + 0] = fmin(255.0f, R + maxVal * e);
-	colorField[pos + 1] = fmin(255.0f, G + maxVal * e);
-	colorField[pos + 2] = fmin(255.0f, B + maxVal * e);
+	colorField[position + 0] = fmin(255.0f, R + maxVal * e);
+	colorField[position + 1] = fmin(255.0f, G + maxVal * e);
+	colorField[position + 2] = fmin(255.0f, B + maxVal * e);
 }
+
 
 //fills output image with corresponding color
 __global__ void paint(uint8_t* colorField, Particle* field, size_t xSize, size_t ySize)
@@ -534,10 +537,10 @@ __global__ void paint(uint8_t* colorField, Particle* field, size_t xSize, size_t
 	colorField[4 * (y * xSize + x) + 3] = 255;
 }
 
-//main, calls vorticity -> diffusion -> force -> pressure -> project -> advect -> paint -> bloom
-void computeField(unsigned char* result, float dt, int x1Pos, int y1Pos, int x2Pos, int y2Pos, bool isPressed)
+//main function, calls vorticity -> diffusion -> force -> pressure -> project -> advect -> paint -> bloom
+void computeField(uint8_t* result, float dt, int x1Pos, int y1Pos, int x2Pos, int y2Pos, bool isPressed)
 {
-	dim3 threadsPerBlock(systemConfig.xThreads, systemConfig.yThreads);
+	dim3 threadsPerBlock(sysConfig.xThreads, sysConfig.yThreads);
 	dim3 numBlocks(xSize / threadsPerBlock.x, ySize / threadsPerBlock.y);
 
 	//curls and vortisity
@@ -555,10 +558,10 @@ void computeField(unsigned char* result, float dt, int x1Pos, int y1Pos, int x2P
 		elapsedTime += dt;
 
 		int roundTime = (int)(elapsedTime) % colorArraySize;
-		int ceilTime = (int)(elapsedTime + 1) % colorArraySize;
+		int ceilTime = (int)((elapsedTime) + 1) % colorArraySize;
 
 		float w = elapsedTime - (int)(elapsedTime);
-		currentColor = colorArray[roundTime] * (1 - w) + colorArray[ceilTime] * 2;
+		currentColor = colorArray[roundTime] * (1 - w) + colorArray[ceilTime] * w;
 
 		Vector2 force;
 		force.x = (x2Pos - x1Pos) * parameters.forceScale;
@@ -573,7 +576,7 @@ void computeField(unsigned char* result, float dt, int x1Pos, int y1Pos, int x2P
 		timeSincePress += dt;
 	}
 
-	//pressure
+	//compute pressure
 	computePressure(numBlocks, threadsPerBlock, dt);
 
 	//project
@@ -582,17 +585,18 @@ void computeField(unsigned char* result, float dt, int x1Pos, int y1Pos, int x2P
 
 	//advect
 	advect << <numBlocks, threadsPerBlock >> > (newField, oldField, xSize, ySize, parameters.densityDiffusion, dt);
+	std::swap(newField, oldField);
 
-	//paint on image
+	//paint image
 	paint << <numBlocks, threadsPerBlock >> > (colorField, oldField, xSize, ySize);
 
-	//bloom
-	if (parameters.bloomEnable && timeSincePress < 5.0f)
+	//apply bloom in mouse pos
+	if (parameters.bloomEnabled && timeSincePress < 5.0f)
 	{
-		applyBloom << <numBlocks, threadsPerBlock >> > (colorField, xSize, ySize, x2Pos, y2Pos, parameters.bloomIntensity / timeSincePress);
+		applyBloom << <numBlocks, threadsPerBlock >> > (colorField, xSize, ySize, x2Pos, y2Pos, parameters.radius, parameters.bloomIntesity);
 	}
 
-	//copy to cpu
+	//copy image to cpu
 	size_t size = xSize * ySize * 4 * sizeof(uint8_t);
 	CUDACall(cudaMemcpy(result, colorField, size, cudaMemcpyDeviceToHost));
 }

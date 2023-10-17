@@ -1,30 +1,44 @@
-#include "SFML\Graphics.hpp"
+#include <SFML/Graphics.hpp>
 #include <iostream>
-
 #include <chrono>
-//#include <ctime>  
+//#include <cstdlib>
+//#include <cmath>
 
 const int SCALE = 2;
-const int WINDOW_WIDTH = 1280;
-const int WINDOW_HEIGHT = 720;
-const int FIELD_WIDTH = WINDOW_WIDTH / SCALE;
-const int FIELD_HEIGHT = WINDOW_HEIGHT / SCALE;
+const int WINDOW_WIDTH = 1600;
+const int WINDOW_HEIGHT = 900;
+const int FIELD_WIDTH = (int)(WINDOW_WIDTH / SCALE);
+const int FIELD_HEIGHT = (int)(WINDOW_HEIGHT / SCALE);
 
-//void setParams(float vDiffusion = 0.8f, float pressure = 1.5f, float vorticity = 50.0f, float cDiffusion = 0.8f,
-//	float dDiffusion = 1.2f, float force = 1000.0f, float bloomIntensity = 25000.0f, int radius = 100, bool bloomEnable = true);
 
-void cudaInit(size_t x, size_t y);
+static struct Parameters
+{
+	float velocityDiffusion;
+	float pressure;
+	float vorticity;
+	float colorDiffusion;
+	float densityDiffusion;
+	float forceScale;
+	float bloomIntesity;
+	int radius;
+	bool bloomEnable;
+} parameters;
+
+void setParams(float vDiffusion = 0.8f, float pressure = 1.5f, float vorticity = 50.0f, float cDiffuion = 0.8f,
+	float dDiffuion = 1.2f, float force = 1000.0f, float bloomIntesity = 25000.0f, int radius = 100, bool bloomEnable = true);
+void computeField(uint8_t* result, float dt, int x1Pos, int y1Pos, int x2Pos, int y2Pos, bool isMousePressed);
+void cudaInit(size_t xSize, size_t ySize);
 void cudaExit();
 
-void computeField(unsigned char* result, float dt, int x1pos = -1, int y1pos = -1, int x2pos = -1, int y2pos = -1, bool isPressed = false);
-
-int main() {
+int main()
+{
 	cudaInit(FIELD_WIDTH, FIELD_HEIGHT);
+	//srand(time(NULL));
 
 	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Fluid Dynamics", sf::Style::Close);
 
-	auto startTime = std::chrono::system_clock::now();
-	auto endTime = std::chrono::system_clock::now();
+	auto start = std::chrono::system_clock::now();
+	auto end = std::chrono::system_clock::now();
 
 	sf::Texture texture;
 	sf::Sprite sprite;
@@ -37,18 +51,24 @@ int main() {
 	bool isMousePressed = false;
 	bool isPaused = false;
 
-	std::chrono::duration<float> timeDifference; 
+	std::chrono::duration<float> timeDifference;
 	sf::Event event;
-	while (window.isOpen()) 
+	while (window.isOpen())
 	{
-		endTime = std::chrono::system_clock::now();
-		timeDifference = endTime - startTime;
-		startTime = endTime;
+		end = std::chrono::system_clock::now();
+		timeDifference = end - start;
+		start = end;
 
 		window.clear(sf::Color::White);
-		while (window.pollEvent(event)) 
+		sf::Event event;
+		while (window.pollEvent(event))
 		{
-			if (event.type == sf::Event::Closed) 
+			if (event.type == sf::Event::Closed)
+			{
+				window.close();
+			}
+
+			if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape)
 			{
 				window.close();
 			}
@@ -58,7 +78,8 @@ int main() {
 				if (event.mouseButton.button == sf::Mouse::Button::Left)
 				{
 					mousePosition1 = { event.mouseButton.x, event.mouseButton.y };
-					mousePosition1 /= SCALE;
+					mousePosition1.x /= SCALE;
+					mousePosition1.y /= SCALE;
 					isMousePressed = true;
 				}
 				else
@@ -76,24 +97,24 @@ int main() {
 			{
 				std::swap(mousePosition1, mousePosition2);
 				mousePosition2 = { event.mouseMove.x, event.mouseMove.y };
-				mousePosition2 /= SCALE;
+				mousePosition2.x /= SCALE;
+				mousePosition2.y /= SCALE;
 			}
 		}
 
 		float dt = 0.02f;
 		if (!isPaused)
 		{
-			computeField(pixelBuffer.data(), dt, mousePosition1.x, mousePosition2.y, mousePosition2.x, mousePosition2.y, isMousePressed);
+			computeField(pixelBuffer.data(), dt, mousePosition1.x, mousePosition1.y, mousePosition2.x, mousePosition2.y, isMousePressed);
 		}
 
 		texture.update(pixelBuffer.data());
 		sprite.setTexture(texture);
-		sprite.setScale({SCALE, SCALE});
+		sprite.setScale({ SCALE, SCALE });
 
 		window.draw(sprite);
 		window.display();
 	}
-
 	cudaExit();
 	return 0;
 }
