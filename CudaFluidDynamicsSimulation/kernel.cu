@@ -145,6 +145,10 @@ void CUDACall(cudaError_t result)
 	if (result)
 	{
 		std::cout << "CUDA error = " << static_cast<unsigned int>(result) << std::endl;
+		if (result == cudaErrorNoDevice)
+		{
+			std::cout << "No CUDA devices" << std::endl;
+		}
 		cudaExit();
 		cudaDeviceReset();
 		exit(99);
@@ -153,6 +157,9 @@ void CUDACall(cudaError_t result)
 
 void cudaInit(size_t x, size_t y)
 {
+	int cudaDevices = 0;
+	CUDACall(cudaGetDeviceCount(&cudaDevices));
+
 	setParams();
 
 	colorArray[0] = { 1.0f, 0.0f, 0.0f };
