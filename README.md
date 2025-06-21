@@ -74,3 +74,73 @@ To calculate advection, the first thought might be to update the grid as we woul
 This might be recognized as Euler's method, a simple and explicit/forward integration method for ordinary differential equations. 
 
 However, there are two main problems with using this method, the first is that simulations that use explicit methods for advection are unstable when using large time steps; they can “blow up” if the magnitude of u(t)t is larger than the size of a single grid cell. The other problem is actually implementing this on the GPU, since we implement it in fragment programs which can’t change the locations of the fragments they are writing, which can’t be done as the forward integration requires us to “move” the particles.
+
+The solution is to flip the problem and use an implicit method where instead of advecting quantities by where the particle moves over the current time step, we trace back each particle from each grid cell back in time to its previous position, and copy the quantities at the position to the starting cell. 
+
+![image](https://github.com/user-attachments/assets/de10c411-f30b-4b15-94dd-c26dcfd92954)
+
+
+Then to update the quantity q, we use:
+![image](https://github.com/user-attachments/assets/21d5a6bc-a610-48ab-b7aa-3deafad114af)
+
+It's important to note that at a low  velocity, we may not go out of the grid cell, so we should choose a correct minimum momentum force that the user can put onto the particles. 
+
+Also to avoid loss of accuracy, in the case that the projection hits the boundary of a cell or its a non-integer value, we perform a bilinear interpolation of the values of the 4 nearest particles and use that as the true value at that point. Then this value is written to the starting grid cell. 
+
+# Diffusion and Viscosity
+
+Every fluid has some viscosity, which prevents external forces affecting it self, like honey or water. Viscosity directly affects the acceleration quired by a fluid:
+
+![image](https://github.com/user-attachments/assets/329718ce-81e4-48ca-9331-8ad40b4642b0)
+
+Like advection, we can formulate the problem simply with:
+
+![image](https://github.com/user-attachments/assets/7c8bd5b2-2dc2-48d1-8682-233f99c9d8f8)
+
+Using Euler's method, but again it is unstable for large time steps and velocities, so instead an implicit formula is used which looks like:
+
+![image](https://github.com/user-attachments/assets/a45dcc12-50f1-4617-9749-a97e8d37967c)
+
+Where I is the identity matrix. This form is stable for any timesteps and velocity. It can be solved using a Jacobi method discussed in the next sections
+
+# Pressure
+
+Pressure is what prevents particles from filling all the space available after some external force is applied to them. It is very difficult to calculate in the form it is represented in the Navier-Stokes equation, but is greatly simplified by applying Helmholtz’s decomposition theorem:  
+
+![image](https://github.com/user-attachments/assets/39c74927-33bc-421f-bcba-102492c059ac)
+
+This theorem states that W, a vector field, can be represented by a sum for two other vector fields. We say that W is the field obtained by calculating displacement, external forces, and diffusion. It has a non-zero divergence, which is contradicting the incompressibility condition of our fluid. To correct this, the pressure must be calculated, so u is the field with zero divergence. By applying the divergence operator we get the formula for the scalar pressure field: 
+
+![image](https://github.com/user-attachments/assets/bc2b2436-7fcf-47a7-b1c4-c01f3d89ea55)
+
+This expression is the Poisson equation for pressure, which can also be solved using a Jacobi method mentioned above. 
+
+# Solving Poisson equations with the Jacobi method
+
+We have two Poisson equations, one for pressure and the other for diffusion. They can be solved using an interactive method with the iterative equation:
+
+![image](https://github.com/user-attachments/assets/b88a0876-3501-4b9c-9189-7bdd99c02656)
+
+In our case, x is the element of an array which represents the scalar or vector field, k is the iteration number. K can be changed to either increase the accuracy of the calculation, or reduce it to increase the speed. 
+
+To calculate the diffusion,![image](https://github.com/user-attachments/assets/3081535a-88e1-49eb-a3fe-74c2b0734107), and ![image](https://github.com/user-attachments/assets/91497473-a6e9-4312-847e-4afd1e5fbc3f), ![image](https://github.com/user-attachments/assets/3a4c0254-f68b-47be-a6bd-b17a4c613a2f). Here beta is the sum of the weights. To have this run on the GPU, we must store at least two velocity vector fields, to independently read values from one field, and write values to the other. It takes about 20-50 iterations to calculate the velocity field using this Jacobi method, which is quite a lot if it were performed on the CPU, but is not a problem when on the GPU. 
+
+To calculate pressure, we say that ![image](https://github.com/user-attachments/assets/861ae2d1-2d1d-4415-a75e-704c166490a4), ![image](https://github.com/user-attachments/assets/8f1a2c62-8df1-4fdd-a599-3d62d8304234), ![image](https://github.com/user-attachments/assets/a31c90b7-4542-4090-bd96-eb74116c6cd4), and ![image](https://github.com/user-attachments/assets/135c9ae9-7452-4d9a-82b8-3a8383954597). The result is a value ![image](https://github.com/user-attachments/assets/a171112f-a37d-401e-bd30-6046fc4a89ea) at that point. Since we only use this to calculate the gradient subtracted from the velocity field, we don't need to do any more conversions. For a pressure field, it takes about 40-80 iterations, as with smaller values, the inaccuracies become quite noticeable. 
+
+# External Forces
+
+This is the simplest part of the algorithm. We describe the external forces by:
+
+![image](https://github.com/user-attachments/assets/ebf6cc6c-bce6-4c1e-885f-c31242d5710b)
+
+Where x_p, y_p are the mouse position, x, y is the position of the current cell, and r is the radius/scaling parameter. The momentum vector G is simply the difference between the original mouse position and the current mouse position. 
+
+# Initial and Boundary Conditions
+
+All differential equations in a finite domain need boundary conditions to be well defined. In this case, the boundary conditions are set to control the fluid near the edges of the coordinate grid and the initial conditions set the parameters that the particles have at the beginning of the simulation. 
+
+In this case, the initial conditions are very simple. The fluid will be stationary, meaning zero velocity in any particle, and the pressure will also be zero. 
+
+Boundary conditions are defined such that the velocity applied to the particles at the edges will be opposite to their current velocity, so they will be repealed from the edge, and so that the pressure is equal to the value right next to the boundary. These will be applied to all the bounding elements, seen below:
+
+![image](https://github.com/user-attachments/assets/dd5d5d35-bbed-4494-b2c3-8219d66b50f8)
