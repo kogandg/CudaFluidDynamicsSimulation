@@ -149,8 +149,11 @@ Boundary conditions are defined such that the velocity applied to the particles 
 This equation is not explicitly part of the Naiver-Stokes equation but is added to increase the realism of the simulation. It is necessary to add this term because of this loss in precision of floating point values, the effect of small curls is lost, to it is resorted by applying an additional force to each point defined by the equations:
 
 ![image](https://github.com/user-attachments/assets/2257929a-3e68-40ab-8a09-d7326b006692)
+
 ![image](https://github.com/user-attachments/assets/fa875009-defb-4e9e-8033-4b55f2b8b0a5)
+
 ![image](https://github.com/user-attachments/assets/1909df3c-5d4a-48f9-a0dc-0d9b2e04e50d)
+
 ![image](https://github.com/user-attachments/assets/19775cca-d4db-4bc0-972d-93a7bfe6b332)
 
 where ![image](https://github.com/user-attachments/assets/d8bbea22-27f0-421b-b326-84164b862fc9) is a constant that controls how large the vortices in our fluid will be.
