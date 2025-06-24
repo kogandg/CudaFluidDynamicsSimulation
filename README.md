@@ -144,3 +144,55 @@ In this case, the initial conditions are very simple. The fluid will be stationa
 Boundary conditions are defined such that the velocity applied to the particles at the edges will be opposite to their current velocity, so they will be repealed from the edge, and so that the pressure is equal to the value right next to the boundary. These will be applied to all the bounding elements, seen below:
 
 ![image](https://github.com/user-attachments/assets/dd5d5d35-bbed-4494-b2c3-8219d66b50f8)
+
+# Vorticity
+This equation is not explicitly part of the Naiver-Stokes equation but is added to increase the realism of the simulation. It is necessary to add this term because of this loss in precision of floating point values, the effect of small curls is lost, to it is resorted by applying an additional force to each point defined by the equations:
+
+![image](https://github.com/user-attachments/assets/2257929a-3e68-40ab-8a09-d7326b006692)
+![image](https://github.com/user-attachments/assets/fa875009-defb-4e9e-8033-4b55f2b8b0a5)
+![image](https://github.com/user-attachments/assets/1909df3c-5d4a-48f9-a0dc-0d9b2e04e50d)
+![image](https://github.com/user-attachments/assets/19775cca-d4db-4bc0-972d-93a7bfe6b332)
+
+where ![image](https://github.com/user-attachments/assets/d8bbea22-27f0-421b-b326-84164b862fc9) is a constant that controls how large the vortices in our fluid will be.
+
+# Implementation
+
+In the actual implementation is where the GPU gems article begins to show its age and no longer becomes a useful reference. Modern CUDA is much more similar to programming on a CPU than it was in 2003 when the article was published, so its advice on textures, texture updating, and slabs is no longer used. Instead, one uses arrays just like you would when programming to be run on a CPU, and instead of looping for each pixel or grid cell, the loop body becomes a device kernel to be run on the GPU. 
+
+As mentioned before, because the kernels are run in parallel, we require two arrays for each field which is edited, so are two fields for particles, a particle having a velocity and color, so these fields will also be referred to as the velocity fields, two fields for pressure, and a field for vorticity. The fields are then swapped at the end of each iteration so that the new values are used for the calculations in the next iteration. 
+
+These sections will be written overviews of the implementation of code and notes. To see the actual code, please look in kernel.cu.
+
+# Advection
+
+The advect function is a direct implementation of the equation described above, it takes the old and new velocity fields, their sizes, the delta time, and the density coefficient, which is used to change the speed of the dissolution of dye and color in the fluid. For advection, we also need a bilinear interpolation function which is used in the method described above for particle handling. 
+
+# Diffusion
+
+The diffusion function is broken into parts, **diffuse** and **computeColor** are called from **computeDiffusion** a predetermined number of times, and the arrays are swapped for reading and writing in the function. Both **diffuse** and **computeColor** use variations of the described Jacobi method. In the functions for **jacobiColor** and **jacobiVelocity**, there is a check to see if the particle is on the edge or boundary, so instead they are set by the boundary conditions described above. 
+
+# External force 
+
+External forces are applied through just one function, **applyForce**, which takes the mouse position, dye color, and the size of the force to be applied as arguments. In this case, the force speeds up particles, and adds the dye color to the particles. 
+
+# Vorticity
+
+This is a larger and complex process compared to the precious sections. It is implemented as functions **computeVorticity** and **applyVorticity**, and we also define **curl** and **absGradient**, which are the gradients of the absolute values of a field. 
+
+# Pressure
+
+Next we need to compute the scalar pressure field and project it onto the velocity field. This is done with **divergence**, which calcululates the velocity divergence, **jacobiPressure**, which implements the Jacobi method of pressure, **computePressure**, and **computePressureImpl**, which performs the iterative calculations. 
+
+Then projection is done is the functions **project**, and **pressureGradient** which is called in **project**. 
+
+# Extras
+
+Some extra functions are **paint**, which copies the colors from the particle field to the RGB array to be displayed to the screen, and **applyBloom**, which applies a highlight under the cursor when it is pressed. 
+
+# Putting all together
+
+Finally, all the functions can be put together to form the final image. The order the functions are called in is: vorticity, diffusion, force, pressure, projection, advection, paint, bloom. In implementation, first vorticity is computed, applied, then the velocity fields are swapped to use the new values in the next steps. Then diffusion of velocity and color. Then forces are applied if the mouse button is pressed. Then pressure and projection. After projection, the old pressure array is wiped so that new values can be written to it. Then advection and the particle field is swapped again for the next steps. The final steps are painting which is getting the color values from the field and writing them to the displayed texture, and bloom is applied. Then the image is copied to the CPU where it is passed to SFML to be displayed on the screen. 
+
+After all that, we get a mesmerizing output like:
+
+https://github.com/user-attachments/assets/1ea30416-b2a2-4080-8fac-57e5da371713
